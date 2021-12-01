@@ -25,16 +25,13 @@ public class Main {
 
 	private static final Logger log = LoggerFactory.getLogger(Main.class);
 
-	static File inputFile;
-
-	public static void main(String[] args) throws IOException {
-
-		if (args.length <= 0) {
-			log.error("File can't be null");
-			return;
-		}
-		inputFile = new File(args[0]);
-
+	// Parameters
+	private static final int minPasswordLength = 2;
+	private static final int maxPasswordLength = 20;
+	private static boolean finished = false;
+	private static File inputFile;
+	private final static Character[] charSet;
+	static {
 		// Character set for cracking
 		final ArrayList<Character> characters = new ArrayList<>();
 		// Numbers
@@ -43,15 +40,19 @@ public class Main {
 		IntStream.range(65, 91).forEach(i -> characters.add((char) i));
 		// Upper case
 		IntStream.range(97, 123).forEach(i -> characters.add((char) i));
+		charSet = characters.toArray(new Character[characters.size()]);
+	}
+	// Thread pool
+	private static final int threadCount = Runtime.getRuntime().availableProcessors();
 
-		final Character[] charSet = characters.toArray(new Character[characters.size()]);
+	public static void main(final String[] args) throws IOException {
 
-		// Parameters
-		final int minPasswordLength = 4;
-		final int maxPasswordLength = Integer.MAX_VALUE;
+		if (args.length <= 0) {
+			log.error("File can't be null");
+			return;
+		}
+		inputFile = new File(args[0]);
 
-		// Thread pool
-		final int threadCount = Runtime.getRuntime().availableProcessors();
 		final ExecutorService threadPoolExecutor = new ThreadPoolExecutor(threadCount, threadCount, 0L,
 				TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>());
 		final CompletableFuture<String> cf = new CompletableFuture<>();
@@ -67,10 +68,9 @@ public class Main {
 
 		final String result = crackPassword(threadPoolExecutor, cf);
 		log.info("Password found: {}", result);
-		System.out.println("Password found: " + result);
 	}
 
-	private static String crackPassword(ExecutorService service, CompletableFuture<String> cf) {
+	private static String crackPassword(final ExecutorService service, final CompletableFuture<String> cf) {
 		String result = "";
 		try {
 			final Instant start = Instant.now();
@@ -78,68 +78,64 @@ public class Main {
 			final Instant finish = Instant.now();
 			final long timeElapsed = Duration.between(start, finish).toMillis();
 			log.info("Total time elapsed: {}", timeElapsed);
-			service.shutdownNow();
 		} catch (InterruptedException | ExecutionException e) {
-			log.error("crackPassword : {}", e.getMessage(), e);
+			log.error("crackPassword", e);
+		} finally {
+			service.shutdownNow();
 		}
 		return result;
 	}
 
-	private static void executeRunnableDesiredTimes(int times, ExecutorService service, Runnable runnable) {
+	private static void executeRunnableDesiredTimes(final int times, final ExecutorService service,
+			final Runnable runnable) {
 		IntStream.range(0, times).forEach(value -> service.execute(runnable));
 	}
 
-	private static Runnable passwordProvider(Character[] charSet, BlockingQueue<String> passwordQueue, int minLen,
-			int maxLen) {
-		final int charSetSize = charSet.length;
+	private static Runnable passwordProvider(final Character[] charSet, final BlockingQueue<String> passwordQueue,
+			final int minLen, final int maxLen) {
 		return () -> {
-			generatorLoop: for (int i = minLen; i < maxLen; ++i) {
-				final ArrayList<String> passwords = new ArrayList<>();
-				passwords.addAll(generatePasswordsForDesiredLength(charSet, i, "", charSetSize));
-				for (int j = 0; j < passwords.size(); j++) {
-					final String pass = passwords.get(j);
-					try {
-						passwordQueue.offer(pass, 12, TimeUnit.HOURS);
-					} catch (final InterruptedException e) {
-						log.error("passwordProvider : {}", e.getMessage(), e);
-						break generatorLoop;
-					}
-				}
-			}
-		};
-	}
-
-	private static Runnable passwordCracker(CompletableFuture<String> cf, BlockingQueue<String> passwordQueue,
-			Decryptor excelDecryptor) {
-		return () -> {
-			while (!Thread.interrupted()) {
+			for (int i = minLen; i < maxLen; i++) {
 				try {
-					final String password = passwordQueue.take();
-					log.info("Testing password: {}", password);
-					final boolean decryptResult = excelDecryptor.verifyPassword(password);
-					if (decryptResult) {
-						cf.complete(password);
-						break;
-					}
-				} catch (InterruptedException | GeneralSecurityException e) {
-					log.error("passwordCracker : {}", e.getMessage(), e);
-					break;
+					generatePasswordsForDesiredLength(charSet, i, "", charSet.length, passwordQueue);
+				} catch (final InterruptedException e) {
+					log.error("passwordProvider : generatePasswordsForDesiredLength : InterruptedException", e);
 				}
 			}
 		};
 	}
 
-	static ArrayList<String> generatePasswordsForDesiredLength(Character[] arr, int i, String s, int length) {
-		final ArrayList<String> passwords = new ArrayList<>();
+	static void generatePasswordsForDesiredLength(final Character[] arr, final int i, final String s, final int length,
+			final BlockingQueue<String> passwordQueue) throws InterruptedException {
 		if (i == 0) {
-			passwords.add(s);
-			return passwords;
+			offeing(s, passwordQueue);
+		} else {
+			for (int j = 0; j < length; j++) {
+				generatePasswordsForDesiredLength(arr, i - 1, s + arr[j], length, passwordQueue);
+			}
 		}
-		for (int j = 0; j < length; j++) {
-			final String appended = s + arr[j];
-			passwords.addAll(generatePasswordsForDesiredLength(arr, i - 1, appended, length));
-		}
-		return passwords;
+	}
+
+	private static void offeing(final String pass, final BlockingQueue<String> passwordQueue)
+			throws InterruptedException {
+		log.trace("Offering : {}", pass);
+		passwordQueue.offer(pass, 12, TimeUnit.HOURS);
+	}
+
+	private static Runnable passwordCracker(final CompletableFuture<String> cf, final BlockingQueue<String> passwordQueue,
+			final Decryptor excelDecryptor) {
+		return () -> {
+			String password = "";
+			try {
+				while (!finished && !excelDecryptor.verifyPassword(password)) {
+					password = passwordQueue.take();
+					log.debug("Testing password: {}", password);
+				}
+				cf.complete(password);
+				finished = true;
+			} catch (InterruptedException | GeneralSecurityException e) {
+				log.error("passwordCracker", e);
+			}
+		};
 	}
 
 }

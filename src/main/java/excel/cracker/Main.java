@@ -18,28 +18,26 @@ import java.util.stream.IntStream;
 import org.apache.poi.poifs.crypt.Decryptor;
 import org.apache.poi.poifs.crypt.EncryptionInfo;
 import org.apache.poi.poifs.filesystem.POIFSFileSystem;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class Main {
 
-	private static final Logger log = LoggerFactory.getLogger(Main.class);
-
 	// Parameters
-	private static final int minPasswordLength = 2;
-	private static final int maxPasswordLength = 20;
+	private static boolean debug = false;
+	private static int minPasswordLength;
+	private static int maxPasswordLength;
 	private static boolean finished = false;
 	private static File inputFile;
 	private final static Character[] charSet;
 	static {
 		// Character set for cracking
-		final ArrayList<Character> characters = new ArrayList<>();
-		// Numbers
-		IntStream.range(48, 58).forEach(i -> characters.add((char) i));
-		// Lower case
-		IntStream.range(65, 91).forEach(i -> characters.add((char) i));
-		// Upper case
-		IntStream.range(97, 123).forEach(i -> characters.add((char) i));
+		final var characters = new ArrayList<Character>();
+//		// Numbers
+//		IntStream.range(48, 58).forEach(i -> characters.add((char) i));
+//		// Lower case
+//		IntStream.range(65, 91).forEach(i -> characters.add((char) i));
+//		// Upper case
+//		IntStream.range(97, 123).forEach(i -> characters.add((char) i));
+		IntStream.range(33, 126).forEach(i -> characters.add((char) i));
 		charSet = characters.toArray(new Character[characters.size()]);
 	}
 	// Thread pool
@@ -48,38 +46,42 @@ public class Main {
 	public static void main(final String[] args) throws IOException {
 
 		if (args.length <= 0) {
-			log.error("File can't be null");
+			System.err.println("File can't be null");
 			return;
 		}
-		inputFile = new File(args[0]);
+		Main.inputFile = new File(args[0]);
+		Main.minPasswordLength = Integer.parseInt(args[1]);
+		Main.maxPasswordLength = Integer.parseInt(args[2]);
 
-		final ExecutorService threadPoolExecutor = new ThreadPoolExecutor(threadCount, threadCount, 0L,
+		final ExecutorService threadPoolExecutor = new ThreadPoolExecutor(Main.threadCount, Main.threadCount, 0L,
 				TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>());
-		final CompletableFuture<String> cf = new CompletableFuture<>();
-		final BlockingQueue<String> passwordQueue = new LinkedBlockingQueue<>(threadCount * 2);
+		final var cf = new CompletableFuture<String>();
+		final BlockingQueue<String> passwordQueue = new LinkedBlockingQueue<>(Main.threadCount * 2);
 
 		// Runnables to execute
-		final Decryptor excelDecryptor = Decryptor.getInstance(new EncryptionInfo(new POIFSFileSystem(inputFile)));
-		final Runnable producer = passwordProvider(charSet, passwordQueue, minPasswordLength, maxPasswordLength);
-		final Runnable consumer = passwordCracker(cf, passwordQueue, excelDecryptor);
+		final var excelDecryptor = Decryptor.getInstance(new EncryptionInfo(new POIFSFileSystem(Main.inputFile)));
+		final var producer = Main.passwordProvider(Main.charSet, passwordQueue, Main.minPasswordLength,
+				Main.maxPasswordLength);
+		final var consumer = Main.passwordCracker(cf, passwordQueue, excelDecryptor);
 
-		executeRunnableDesiredTimes(1, threadPoolExecutor, producer);
-		executeRunnableDesiredTimes(threadCount - 1, threadPoolExecutor, consumer);
+		Main.executeRunnableDesiredTimes(1, threadPoolExecutor, producer);
+		Main.executeRunnableDesiredTimes(Main.threadCount - 1, threadPoolExecutor, consumer);
 
-		final String result = crackPassword(threadPoolExecutor, cf);
-		log.info("Password found: {}", result);
+		final var result = Main.crackPassword(threadPoolExecutor, cf);
+		System.out.println(String.format("Password found: {}", result));
 	}
 
 	private static String crackPassword(final ExecutorService service, final CompletableFuture<String> cf) {
-		String result = "";
+		var result = "";
 		try {
-			final Instant start = Instant.now();
+			final var start = Instant.now();
 			result = cf.get();
-			final Instant finish = Instant.now();
-			final long timeElapsed = Duration.between(start, finish).toMillis();
-			log.info("Total time elapsed: {}", timeElapsed);
+			final var finish = Instant.now();
+			final var timeElapsed = Duration.between(start, finish).toMillis();
+			System.out.println(String.format("Total time elapsed: %s", timeElapsed));
 		} catch (InterruptedException | ExecutionException e) {
-			log.error("crackPassword", e);
+			System.err.println("crackPassword");
+			e.printStackTrace();
 		} finally {
 			service.shutdownNow();
 		}
@@ -94,11 +96,12 @@ public class Main {
 	private static Runnable passwordProvider(final Character[] charSet, final BlockingQueue<String> passwordQueue,
 			final int minLen, final int maxLen) {
 		return () -> {
-			for (int i = minLen; i < maxLen; i++) {
+			for (var i = minLen; i < maxLen; i++) {
 				try {
-					generatePasswordsForDesiredLength(charSet, i, "", charSet.length, passwordQueue);
+					Main.generatePasswordsForDesiredLength(charSet, i, "", charSet.length, passwordQueue);
 				} catch (final InterruptedException e) {
-					log.error("passwordProvider : generatePasswordsForDesiredLength : InterruptedException", e);
+					System.err.println("passwordProvider : generatePasswordsForDesiredLength : InterruptedException");
+					e.printStackTrace();
 				}
 			}
 		};
@@ -107,33 +110,35 @@ public class Main {
 	static void generatePasswordsForDesiredLength(final Character[] arr, final int i, final String s, final int length,
 			final BlockingQueue<String> passwordQueue) throws InterruptedException {
 		if (i == 0) {
-			offeing(s, passwordQueue);
+			Main.offeing(s, passwordQueue);
 		} else {
-			for (int j = 0; j < length; j++) {
-				generatePasswordsForDesiredLength(arr, i - 1, s + arr[j], length, passwordQueue);
+			for (var j = 0; j < length; j++) {
+				Main.generatePasswordsForDesiredLength(arr, i - 1, s + arr[j], length, passwordQueue);
 			}
 		}
 	}
 
 	private static void offeing(final String pass, final BlockingQueue<String> passwordQueue)
 			throws InterruptedException {
-		log.trace("Offering : {}", pass);
+		System.out.println(String.format("Offering : %s", pass));
 		passwordQueue.offer(pass, 12, TimeUnit.HOURS);
 	}
 
-	private static Runnable passwordCracker(final CompletableFuture<String> cf, final BlockingQueue<String> passwordQueue,
-			final Decryptor excelDecryptor) {
+	private static Runnable passwordCracker(final CompletableFuture<String> cf,
+			final BlockingQueue<String> passwordQueue, final Decryptor excelDecryptor) {
 		return () -> {
-			String password = "";
+			var password = "";
 			try {
-				while (!finished && !excelDecryptor.verifyPassword(password)) {
+				while (!Main.finished && !excelDecryptor.verifyPassword(password)) {
 					password = passwordQueue.take();
-					log.debug("Testing password: {}", password);
+//					if (debug)
+//						System.err.printf("Testing password: {}", password);
 				}
 				cf.complete(password);
-				finished = true;
+				Main.finished = true;
 			} catch (InterruptedException | GeneralSecurityException e) {
-				log.error("passwordCracker", e);
+				System.err.println("passwordCracker");
+				e.printStackTrace();
 			}
 		};
 	}

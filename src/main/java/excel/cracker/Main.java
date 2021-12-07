@@ -30,7 +30,7 @@ public class Main {
 	// Parameters
 	private static Instant chronoStart = Instant.now();
 	private static AtomicLong test = new AtomicLong(0);
-	private static boolean debug = false;
+	private static long maxPwS = 0;
 	private static int minPasswordLength;
 	private static int maxPasswordLength;
 	private static boolean finished = false;
@@ -72,7 +72,9 @@ public class Main {
 				Main.maxPasswordLength);
 		final var consumer = Main.passwordCracker(cf, passwordQueue, excelDecryptor);
 
+		System.out.println("Run producer");
 		Main.executeRunnableDesiredTimes(1, threadPoolExecutor, producer);
+		System.out.println(String.format("Run %d consumer", threadCount - 1));
 		Main.executeRunnableDesiredTimes(Main.threadCount - 1, threadPoolExecutor, consumer);
 
 		final var result = Main.crackPassword(threadPoolExecutor, cf);
@@ -141,10 +143,10 @@ public class Main {
 			try {
 				while (!Main.finished && !excelDecryptor.verifyPassword(password)) {
 					password = passwordQueue.take();
-					System.out.print(
-							String.format("Offering : %s, %010d pw, %10d pw/s, since %d min\r", password, test.incrementAndGet(),
-									Math.floorMod(test.get(), Duration.between(chronoStart, Instant.now()).toSeconds() + 1),
-									Duration.between(chronoStart, Instant.now()).toMinutes()));
+					final long pws = Math.floorMod(test.get(), Duration.between(chronoStart, Instant.now()).toSeconds() + 1);
+					maxPwS = Math.max(pws, maxPwS);
+					System.out.print(String.format("Offering : %s, %010d pw, %10d pw/s (max %4d pw/s), since %d min\r", password,
+							test.incrementAndGet(), pws, maxPwS, Duration.between(chronoStart, Instant.now()).toMinutes()));
 					// if (debug)
 					// System.err.printf("Testing password: {}", password);
 				}

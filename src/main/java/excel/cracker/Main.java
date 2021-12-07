@@ -30,23 +30,32 @@ public class Main {
 	// Parameters
 	private static Instant chronoStart = Instant.now();
 	private static AtomicLong test = new AtomicLong(0);
-	private static long maxPwS = 0;
+	private static volatile long maxPwS = 0;
 	private static int minPasswordLength;
 	private static int maxPasswordLength;
 	private static boolean finished = false;
 	private static File inputFile;
+	private static long numberOfTests;
 	private final static Character[] charSet;
 	static {
 		// Character set for cracking
 		final var characters = new ArrayList<Character>();
-		// // Numbers
-		// IntStream.range(48, 58).forEach(i -> characters.add((char) i));
-		// // Lower case
-		// IntStream.range(65, 91).forEach(i -> characters.add((char) i));
-		// // Upper case
-		// IntStream.range(97, 123).forEach(i -> characters.add((char) i));
+		// Lower case
+		IntStream.range(97, 123).forEach(i -> characters.add((char) i));
+		// Upper case
+		IntStream.range(65, 91).forEach(i -> characters.add((char) i));
+		// Numbers
+		IntStream.range(48, 58).forEach(i -> characters.add((char) i));
+		// Space
+		characters.add((char) 32);
+		// Special 1
+		IntStream.range(33, 39).forEach(i -> characters.add((char) i));
+		// Special 2
+		IntStream.range(42, 47).forEach(i -> characters.add((char) i));
+		// Special 3
+		IntStream.range(95, 97).forEach(i -> characters.add((char) i));
 		// Full printable ascii table
-		IntStream.range(32, 127).forEach(i -> characters.add((char) i));
+		// IntStream.range(32, 127).forEach(i -> characters.add((char) i));
 		charSet = characters.toArray(new Character[characters.size()]);
 	}
 	// Thread pool
@@ -72,6 +81,8 @@ public class Main {
 		final var producer = Main.passwordProvider(Main.charSet, passwordQueue, Main.minPasswordLength,
 				Main.maxPasswordLength);
 		final var consumer = Main.passwordCracker(cf, passwordQueue, excelDecryptor);
+
+		numberOfTests = computeNumberOfTests(charSet.length, minPasswordLength, maxPasswordLength);
 
 		System.out.println("Run producer");
 		Main.executeRunnableDesiredTimes(1, threadPoolExecutor, producer);
@@ -144,10 +155,15 @@ public class Main {
 			try {
 				while (!Main.finished && !excelDecryptor.verifyPassword(password)) {
 					password = passwordQueue.take();
-					final long pws = Math.floorMod(test.get(), Duration.between(chronoStart, Instant.now()).toSeconds() + 1);
+					final Duration elapsedTime = Duration.between(chronoStart, Instant.now());
+					final long pws = Math.floorMod(test.get(), Math.max(elapsedTime.toSeconds(), 1));
 					maxPwS = Math.max(pws, maxPwS);
-					System.out.print(String.format("Offering : %s, %010d pw, %10d pw/s (max %4d pw/s), since %d min\r", password,
-							test.incrementAndGet(), pws, maxPwS, Duration.between(chronoStart, Instant.now()).toMinutes()));
+
+					final Duration remaining = Duration
+							.ofSeconds(Math.floorDiv(Math.subtractExact(numberOfTests, test.get()), Math.max(maxPwS, 1)));
+					System.out
+							.print(String.format("Testing : %s, %010d pw, %10d pw/s (max %4d pw/s), since %d min, remaining %s \r",
+									password, test.incrementAndGet(), pws, maxPwS, elapsedTime.toMinutes(), remaining.toDays()));
 					// if (debug)
 					// System.err.printf("Testing password: {}", password);
 				}
@@ -160,4 +176,7 @@ public class Main {
 		};
 	}
 
+	private static long computeNumberOfTests(final int length, final int minPasswordLength, final int maxPasswordLength) {
+		return (long) Math.pow(length, maxPasswordLength);
+	}
 }

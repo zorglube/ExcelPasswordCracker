@@ -45,7 +45,8 @@ public class Main {
 		// IntStream.range(65, 91).forEach(i -> characters.add((char) i));
 		// // Upper case
 		// IntStream.range(97, 123).forEach(i -> characters.add((char) i));
-		IntStream.range(33, 126).forEach(i -> characters.add((char) i));
+		// Full printable ascii table
+		IntStream.range(32, 127).forEach(i -> characters.add((char) i));
 		charSet = characters.toArray(new Character[characters.size()]);
 	}
 	// Thread pool
